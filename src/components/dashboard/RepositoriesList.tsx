@@ -6,7 +6,12 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom
 import { Button } from "@/components/ui-custom/Button";
 import { Repository } from "@/lib/types";
 import { GitBranch, Plus, Lock, Globe, GitFork, Star } from "lucide-react";
-import { fetchUserRepositories, fetchOrganizationRepositories, transformGithubRepository } from "@/lib/github";
+import { 
+  fetchUserRepositories, 
+  fetchOrganizationRepositories, 
+  transformGithubRepository,
+  fetchUserOrganizations 
+} from "@/lib/github";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface RepositoriesListProps {
