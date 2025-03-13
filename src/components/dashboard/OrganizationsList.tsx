@@ -163,7 +163,7 @@ interface OrganizationItemProps {
 const OrganizationItem: React.FC<OrganizationItemProps> = ({ organization }) => {
   return (
     <li className="transition-colors hover:bg-muted/10">
-      <Link to={`/organizations/${organization.id}`} className="block p-4">
+      <Link to={`/organizations/${organization.name}`} className="block p-4">
         <div className="flex items-start">
           <div className="flex-shrink-0 mr-4">
             <img

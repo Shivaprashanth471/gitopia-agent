@@ -8,7 +8,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import MainLayout from "@/components/layout/MainLayout";
 import Dashboard from "@/pages/Dashboard";
 import Organizations from "@/pages/Organizations";
+import OrganizationDetails from "@/pages/OrganizationDetails";
 import Repositories from "@/pages/Repositories";
+import RepositoryDetails from "@/pages/RepositoryDetails";
 import Users from "@/pages/Users";
 import NotFound from "@/pages/NotFound";
 import { getGithubToken } from "@/lib/github";
@@ -42,7 +44,9 @@ const App = () => {
             <Route element={<MainLayout />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/organizations" element={<Organizations />} />
+              <Route path="/organizations/:orgId" element={<OrganizationDetails />} />
               <Route path="/repositories" element={<Repositories />} />
+              <Route path="/repositories/:repoId" element={<RepositoryDetails />} />
               <Route path="/users" element={<Users />} />
             </Route>
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
