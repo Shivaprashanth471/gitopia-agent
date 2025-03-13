@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { 
@@ -13,6 +13,7 @@ import TransitionWrapper from "@/components/ui-custom/TransitionWrapper";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
 import { Button } from "@/components/ui-custom/Button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { 
   Users, 
   ArrowLeft, 
@@ -24,48 +25,31 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import UsersList from "@/components/dashboard/UsersList";
 import RepositoriesList from "@/components/dashboard/RepositoriesList";
+import WorkflowStats from "@/components/dashboard/WorkflowStats";
+import CodeQuality from "@/components/dashboard/CodeQuality";
 
 const OrganizationDetails: React.FC = () => {
   const { orgId } = useParams<{ orgId: string }>();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("overview");
   
-  const { data: organizations } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: async () => {
-      try {
-        return await fetchOrganizationDetails("");
-      } catch (error) {
-        console.error("Failed to fetch organizations:", error);
-        return [];
-      }
-    },
-    enabled: false // Just to have the organizations data type
-  });
-
   const { data: organization, isLoading, error } = useQuery({
     queryKey: ['organization', orgId],
     queryFn: async () => {
       try {
-        // For the initial implementation, let's get the organization data
-        // from the available organizations by ID
-        // In a real app, we'd make a specific API call for the org details
-        const orgs = await fetchOrganizationMembers("github"); // Example org
+        if (!orgId) return null;
+        
+        // Fetch the organization details directly
+        const orgDetails = await fetchOrganizationDetails(orgId);
+        
+        // Fetch organization members in parallel
+        const members = await fetchOrganizationMembers(orgId);
+        
+        // Transform and return the complete organization data
         return {
-          name: "GitHub",
-          description: "How people build software",
-          avatarUrl: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
-          isPublic: true,
-          createdAt: new Date().toISOString(),
-          id: orgId || "123",
-          members: orgs.map((member: any) => ({
-            id: member.id,
-            user: {
-              id: member.id,
-              username: member.login,
-              name: member.login,
-              avatarUrl: member.avatar_url
-            }
-          }))
+          ...transformGithubOrganization(orgDetails, members),
+          // Store the original login/name for API calls
+          login: orgDetails.login
         };
       } catch (error) {
         console.error("Failed to fetch organization details:", error);
@@ -184,45 +168,64 @@ const OrganizationDetails: React.FC = () => {
       </TransitionWrapper>
 
       <TransitionWrapper show={true} animation="scale" duration={300} className="delay-100">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader className="flex-row justify-between items-center">
-              <div className="flex items-center">
-                <Calendar className="w-5 h-5 mr-2 text-muted-foreground" />
-                <CardTitle>Created</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p>{formatDistanceToNow(new Date(organization.createdAt))} ago</p>
-            </CardContent>
-          </Card>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid grid-cols-4 mb-8">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="repositories">Repositories</TabsTrigger>
+            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          </TabsList>
           
-          <Card>
-            <CardHeader className="flex-row justify-between items-center">
-              <div className="flex items-center">
-                <Users className="w-5 h-5 mr-2 text-muted-foreground" />
-                <CardTitle>Members</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p>{organization.members.length} members</p>
-            </CardContent>
-          </Card>
-        </div>
-      </TransitionWrapper>
-
-      <TransitionWrapper show={true} animation="scale" duration={300} className="delay-200">
-        <UsersList 
-          organizationId={organization.id} 
-          organizationName={organization.name} 
-        />
-      </TransitionWrapper>
-
-      <TransitionWrapper show={true} animation="scale" duration={300} className="delay-300">
-        <RepositoriesList 
-          organizationId={organization.id}
-          organizationName={organization.name}
-        />
+          <TabsContent value="overview" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader className="flex-row justify-between items-center">
+                  <div className="flex items-center">
+                    <Calendar className="w-5 h-5 mr-2 text-muted-foreground" />
+                    <CardTitle>Created</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p>{formatDistanceToNow(new Date(organization.createdAt))} ago</p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="flex-row justify-between items-center">
+                  <div className="flex items-center">
+                    <Users className="w-5 h-5 mr-2 text-muted-foreground" />
+                    <CardTitle>Members</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p>{organization.members.length} members</p>
+                </CardContent>
+              </Card>
+            </div>
+            
+            <WorkflowStats organizationName={organization.login} />
+            <CodeQuality organizationName={organization.login} />
+          </TabsContent>
+          
+          <TabsContent value="repositories">
+            <RepositoriesList 
+              organizationId={organization.id}
+              organizationName={organization.login}
+            />
+          </TabsContent>
+          
+          <TabsContent value="members">
+            <UsersList 
+              organizationId={organization.id} 
+              organizationName={organization.login} 
+            />
+          </TabsContent>
+          
+          <TabsContent value="analytics" className="space-y-6">
+            <WorkflowStats organizationName={organization.login} />
+            <CodeQuality organizationName={organization.login} />
+          </TabsContent>
+        </Tabs>
       </TransitionWrapper>
     </div>
   );

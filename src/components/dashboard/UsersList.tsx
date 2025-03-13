@@ -137,6 +137,11 @@ const UsersList: React.FC<UsersListProps> = ({
           {displayedUsers.map((user) => (
             <UserItem key={user.id} user={user} />
           ))}
+          {displayedUsers.length === 0 && (
+            <li className="py-8 text-center">
+              <p className="text-muted-foreground">No users found</p>
+            </li>
+          )}
         </ul>
       </CardContent>
     </Card>

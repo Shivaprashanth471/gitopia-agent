@@ -17,22 +17,29 @@ import { Skeleton } from "@/components/ui/skeleton";
 interface RepositoriesListProps {
   limit?: number;
   organizationId?: string;
+  organizationName?: string;
 }
 
-const RepositoriesList: React.FC<RepositoriesListProps> = ({ limit, organizationId }) => {
+const RepositoriesList: React.FC<RepositoriesListProps> = ({ 
+  limit, 
+  organizationId,
+  organizationName 
+}) => {
   const { 
     data: repositories = [],
     isLoading, 
     error 
   } = useQuery({
-    queryKey: ['repositories', { organizationId }],
+    queryKey: ['repositories', { organizationId, organizationName }],
     queryFn: async () => {
       try {
         let repos;
         
-        if (organizationId) {
+        if (organizationName) {
+          // If we have the organization name, use it directly
+          repos = await fetchOrganizationRepositories(organizationName);
+        } else if (organizationId) {
           // Find the organization name from the ID
-          // This is a simplified approach - in a real app, you might need to store org name->id mappings
           const orgs = await fetchUserOrganizations();
           const org = orgs.find((o: any) => o.id.toString() === organizationId);
           
