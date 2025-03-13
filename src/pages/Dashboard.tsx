@@ -1,13 +1,33 @@
 
-import React from "react";
+import React, { useState } from "react";
 import OrganizationsList from "@/components/dashboard/OrganizationsList";
 import RepositoriesList from "@/components/dashboard/RepositoriesList";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
 import { Button } from "@/components/ui-custom/Button";
 import TransitionWrapper from "@/components/ui-custom/TransitionWrapper";
 import { GitCommit, GitPullRequest, GitMerge, Clock } from "lucide-react";
+import GitHubTokenInput from "@/components/github/GitHubTokenInput";
+import { getGithubToken } from "@/lib/github";
 
 const Dashboard: React.FC = () => {
+  const [hasToken, setHasToken] = useState(!!getGithubToken());
+
+  const handleTokenSet = () => {
+    setHasToken(true);
+  };
+
+  if (!hasToken) {
+    return (
+      <div className="max-w-2xl mx-auto mt-8">
+        <h1 className="text-3xl font-bold mb-6">Welcome to Gitopia</h1>
+        <p className="text-muted-foreground mb-8">
+          Connect your GitHub account to get started using Gitopia.
+        </p>
+        <GitHubTokenInput onTokenSet={handleTokenSet} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <TransitionWrapper show={true} animation="fade" duration={500}>
