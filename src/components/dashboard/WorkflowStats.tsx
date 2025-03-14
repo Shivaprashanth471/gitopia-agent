@@ -8,13 +8,31 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { GitBranch, Activity, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { getGithubToken } from "@/lib/github";
 
 interface WorkflowStatsProps {
   organizationName: string;
   repositoryName?: string;
 }
 
-// Sample data for visualization, will be replaced with real data in production
+interface WorkflowRun {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  created_at: string;
+}
+
+interface ProcessedWorkflowData {
+  name: string;
+  success: number;
+  failures: number;
+  skipped: number;
+  total: number;
+  lastRun: string;
+}
+
+// Fallback to sample data when real data can't be fetched
 const generateSampleWorkflowData = (orgName: string, repoName?: string) => {
   // Create more meaningful workflow names based on common CI/CD processes
   const workflows = [
@@ -43,29 +61,133 @@ const generateSampleWorkflowData = (orgName: string, repoName?: string) => {
   });
 };
 
+// Fetch workflow runs from GitHub API
+const fetchWorkflowRuns = async (owner: string, repo: string) => {
+  const token = getGithubToken();
+  if (!token) throw new Error("GitHub token not found");
+
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=100`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch workflow runs: ${response.status}`);
+  }
+
+  return await response.json();
+};
+
+// Fetch workflow definitions from GitHub API
+const fetchWorkflows = async (owner: string, repo: string) => {
+  const token = getGithubToken();
+  if (!token) throw new Error("GitHub token not found");
+
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch workflows: ${response.status}`);
+  }
+
+  return await response.json();
+};
+
+// Process workflow runs data to get statistics
+const processWorkflowData = (workflowRuns: WorkflowRun[], workflows: any): ProcessedWorkflowData[] => {
+  // Group runs by workflow name
+  const workflowMap = new Map<string, WorkflowRun[]>();
+  
+  // Create a map of workflow IDs to names
+  const workflowNames = new Map();
+  if (workflows && workflows.workflows) {
+    workflows.workflows.forEach((wf: any) => {
+      workflowNames.set(wf.id, wf.name);
+    });
+  }
+  
+  // Group runs by workflow name
+  workflowRuns.forEach(run => {
+    const name = run.name;
+    if (!workflowMap.has(name)) {
+      workflowMap.set(name, []);
+    }
+    workflowMap.get(name)?.push(run);
+  });
+  
+  // Calculate statistics for each workflow
+  return Array.from(workflowMap.entries()).map(([name, runs]) => {
+    const total = runs.length;
+    const successes = runs.filter(run => run.conclusion === "success").length;
+    const failures = runs.filter(run => run.conclusion === "failure").length;
+    const skipped = runs.filter(run => run.conclusion === "skipped" || run.conclusion === "cancelled").length;
+    
+    // Calculate percentages
+    const successPercent = total > 0 ? Math.round((successes / total) * 100) : 0;
+    const failurePercent = total > 0 ? Math.round((failures / total) * 100) : 0;
+    const skippedPercent = total > 0 ? Math.round((skipped / total) * 100) : 0;
+    
+    // Find the most recent run
+    const sortedRuns = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const lastRun = sortedRuns.length > 0 ? sortedRuns[0].created_at : new Date().toISOString();
+    
+    return {
+      name,
+      success: successPercent,
+      failures: failurePercent,
+      skipped: skippedPercent,
+      total,
+      lastRun
+    };
+  });
+};
+
 const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, repositoryName }) => {
   const { toast } = useToast();
   const context = repositoryName ? `${repositoryName} repository` : `${organizationName} organization`;
   
-  const { data: workflowStats, isLoading, error } = useQuery({
-    queryKey: ["workflow-stats", organizationName, repositoryName],
+  const { data: workflowsData, isLoading: isLoadingWorkflows, error: workflowsError } = useQuery({
+    queryKey: ["workflows", organizationName, repositoryName],
     queryFn: async () => {
-      try {
-        // In production, fetch from GitHub Actions API
-        // For now, returning sample data
-        return generateSampleWorkflowData(organizationName, repositoryName);
-      } catch (error) {
-        console.error("Failed to fetch workflow statistics:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load workflow statistics",
-          variant: "destructive"
-        });
-        return [];
-      }
+      if (!repositoryName) return null;
+      return await fetchWorkflows(organizationName, repositoryName);
     },
-    enabled: !!organizationName && !!localStorage.getItem("github_token")
+    enabled: !!organizationName && !!repositoryName && !!getGithubToken()
   });
+  
+  const { data: workflowRunsData, isLoading: isLoadingRuns, error: runsError } = useQuery({
+    queryKey: ["workflow-runs", organizationName, repositoryName],
+    queryFn: async () => {
+      if (!repositoryName) return null;
+      return await fetchWorkflowRuns(organizationName, repositoryName);
+    },
+    enabled: !!organizationName && !!repositoryName && !!getGithubToken()
+  });
+  
+  const isLoading = isLoadingWorkflows || isLoadingRuns;
+  const error = workflowsError || runsError;
+  
+  // Process the workflow data if available
+  const workflowStats = React.useMemo(() => {
+    if (workflowRunsData?.workflow_runs && workflowsData) {
+      return processWorkflowData(workflowRunsData.workflow_runs, workflowsData);
+    }
+    
+    // Fallback to sample data
+    if (error || !workflowRunsData || !repositoryName) {
+      return generateSampleWorkflowData(organizationName, repositoryName);
+    }
+    
+    return [];
+  }, [workflowRunsData, workflowsData, error, organizationName, repositoryName]);
 
   if (isLoading) {
     return (
@@ -101,6 +223,37 @@ const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, reposit
         </CardHeader>
         <CardContent>
           <p className="text-red-500">Failed to load workflow statistics</p>
+          {!repositoryName && (
+            <p className="text-muted-foreground mt-2">Select a repository to view workflow statistics</p>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!workflowStats || workflowStats.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="flex-row justify-between items-center">
+          <div className="flex items-center">
+            <Activity className="w-5 h-5 mr-2 text-muted-foreground" />
+            <CardTitle>Workflow Statistics</CardTitle>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Showing data for {context}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-8">
+            <p className="text-muted-foreground">No workflow data available</p>
+            {!workflowRunsData?.workflow_runs && repositoryName && (
+              <p className="text-sm text-muted-foreground mt-2">
+                {workflowRunsData?.total_count === 0 ? 
+                  "This repository does not have any workflow runs" : 
+                  "Using sample data as a placeholder"}
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
     );
@@ -115,6 +268,7 @@ const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, reposit
         </div>
         <div className="text-sm text-muted-foreground">
           Showing data for {context}
+          {!workflowRunsData?.workflow_runs && " (sample data)"}
         </div>
       </CardHeader>
       <CardContent>

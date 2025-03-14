@@ -87,6 +87,19 @@ export const fetchRepositoryCollaborators = async (owner: string, repo: string) 
   return await githubFetch(`/repos/${owner}/${repo}/collaborators`);
 };
 
+// New GitHub Actions API endpoints
+export const fetchRepositoryWorkflows = async (owner: string, repo: string) => {
+  return await githubFetch(`/repos/${owner}/${repo}/actions/workflows`);
+};
+
+export const fetchRepositoryWorkflowRuns = async (owner: string, repo: string) => {
+  return await githubFetch(`/repos/${owner}/${repo}/actions/runs?per_page=100`);
+};
+
+export const fetchWorkflowRuns = async (owner: string, repo: string, workflowId: string) => {
+  return await githubFetch(`/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?per_page=100`);
+};
+
 // Transform GitHub API responses to our app's data model
 export const transformGithubUser = (user: any) => {
   return {

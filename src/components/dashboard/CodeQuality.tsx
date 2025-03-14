@@ -1,11 +1,12 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Search, Circle, AlertCircle, CheckCircle, Code } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui-custom/Button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
 interface CodeQualityProps {
@@ -20,7 +21,15 @@ interface CodeMetric {
   description: string;
 }
 
-// Sample data for visualization, will be replaced with real SonarQube data in production
+interface SonarQubeIssue {
+  id: string;
+  title: string;
+  severity: string;
+  path: string;
+  line: number;
+}
+
+// Sample data generator as fallback
 const generateSampleCodeQuality = (orgName: string, repoName?: string) => {
   // Use the repo name to create more realistic/consistent values
   let seed = 0;
@@ -115,6 +124,131 @@ const generateSampleCodeQuality = (orgName: string, repoName?: string) => {
   };
 };
 
+// SonarQube token management
+const getSonarQubeToken = () => localStorage.getItem("sonarqube_token");
+const setSonarQubeToken = (token: string) => localStorage.setItem("sonarqube_token", token);
+
+// Function to fetch metrics from SonarQube
+const fetchSonarQubeMetrics = async (projectKey: string) => {
+  const token = getSonarQubeToken();
+  if (!token) throw new Error("SonarQube token not found");
+
+  // SonarQube API endpoint for metrics
+  const url = `https://sonarcloud.io/api/measures/component?component=${projectKey}&metricKeys=coverage,duplicated_lines_density,sqale_index,code_smells,bugs`;
+  
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch SonarQube metrics: ${response.status}`);
+  }
+
+  return await response.json();
+};
+
+// Function to fetch issues from SonarQube
+const fetchSonarQubeIssues = async (projectKey: string) => {
+  const token = getSonarQubeToken();
+  if (!token) throw new Error("SonarQube token not found");
+
+  // SonarQube API endpoint for issues
+  const url = `https://sonarcloud.io/api/issues/search?componentKeys=${projectKey}&resolved=false&ps=10`;
+  
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch SonarQube issues: ${response.status}`);
+  }
+
+  return await response.json();
+};
+
+// Process SonarQube metrics into our format
+const processSonarQubeMetrics = (data: any): CodeMetric[] => {
+  if (!data || !data.component || !data.component.measures) {
+    return [];
+  }
+
+  const measures = data.component.measures;
+  const metricsMap = new Map();
+  
+  measures.forEach((measure: any) => {
+    metricsMap.set(measure.metric, measure.value);
+  });
+  
+  const metrics: CodeMetric[] = [];
+  
+  // Coverage
+  const coverage = parseFloat(metricsMap.get("coverage") || "0");
+  metrics.push({
+    name: "Code Coverage",
+    value: coverage,
+    status: coverage > 80 ? "good" : coverage > 70 ? "warning" : "critical",
+    description: "Percentage of code covered by tests"
+  });
+  
+  // Duplication
+  const duplication = parseFloat(metricsMap.get("duplicated_lines_density") || "0");
+  metrics.push({
+    name: "Duplication",
+    value: duplication,
+    status: duplication < 5 ? "good" : duplication < 10 ? "warning" : "critical",
+    description: "Percentage of duplicated code"
+  });
+  
+  // Technical Debt (sqale_index is in minutes, convert to hours)
+  const debtMinutes = parseInt(metricsMap.get("sqale_index") || "0");
+  const debtHours = Math.ceil(debtMinutes / 60);
+  metrics.push({
+    name: "Technical Debt",
+    value: debtHours,
+    status: debtHours < 4 ? "good" : debtHours < 8 ? "warning" : "critical",
+    description: "Hours needed to fix all issues"
+  });
+  
+  // Code Smells
+  const codeSmells = parseInt(metricsMap.get("code_smells") || "0");
+  metrics.push({
+    name: "Code Smells",
+    value: codeSmells,
+    status: codeSmells < 20 ? "good" : codeSmells < 40 ? "warning" : "critical",
+    description: "Number of code smells detected"
+  });
+  
+  // Bugs
+  const bugs = parseInt(metricsMap.get("bugs") || "0");
+  metrics.push({
+    name: "Bugs",
+    value: bugs,
+    status: bugs < 2 ? "good" : bugs < 4 ? "warning" : "critical",
+    description: "Number of bugs detected"
+  });
+  
+  return metrics;
+};
+
+// Process SonarQube issues into our format
+const processSonarQubeIssues = (data: any): SonarQubeIssue[] => {
+  if (!data || !data.issues) {
+    return [];
+  }
+  
+  return data.issues.map((issue: any) => ({
+    id: issue.key,
+    title: issue.message,
+    severity: issue.severity.toLowerCase(),
+    path: issue.component.split(':').pop() || "",
+    line: issue.line || 0
+  }));
+};
+
 const getStatusIcon = (status: string) => {
   switch (status) {
     case "good":
@@ -130,29 +264,87 @@ const getStatusIcon = (status: string) => {
 
 const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryName }) => {
   const { toast } = useToast();
+  const [tokenInput, setTokenInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
   const context = repositoryName 
     ? `${repositoryName} repository` 
     : `${organizationName} organization`;
-  
-  const { data: codeQuality, isLoading, error } = useQuery({
-    queryKey: ["code-quality", organizationName, repositoryName],
+    
+  const sonarQubeToken = getSonarQubeToken();
+  const projectKey = repositoryName 
+    ? `${organizationName}_${repositoryName}` 
+    : organizationName;
+    
+  const { data: sonarMetrics, isLoading: isLoadingMetrics, error: metricsError } = useQuery({
+    queryKey: ["sonar-metrics", projectKey],
     queryFn: async () => {
       try {
-        // In production, fetch from SonarQube API
-        // For now, returning sample data
-        return generateSampleCodeQuality(organizationName, repositoryName);
+        return await fetchSonarQubeMetrics(projectKey);
       } catch (error) {
-        console.error("Failed to fetch code quality metrics:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load code quality metrics",
-          variant: "destructive"
-        });
-        return { metrics: [], issues: [], sonarQubeConnected: false };
+        console.error("Failed to fetch SonarQube metrics:", error);
+        return null;
       }
     },
-    enabled: !!organizationName && !!localStorage.getItem("github_token")
+    enabled: !!repositoryName && !!sonarQubeToken
   });
+  
+  const { data: sonarIssues, isLoading: isLoadingIssues, error: issuesError } = useQuery({
+    queryKey: ["sonar-issues", projectKey],
+    queryFn: async () => {
+      try {
+        return await fetchSonarQubeIssues(projectKey);
+      } catch (error) {
+        console.error("Failed to fetch SonarQube issues:", error);
+        return null;
+      }
+    },
+    enabled: !!repositoryName && !!sonarQubeToken
+  });
+  
+  const isLoading = isLoadingMetrics || isLoadingIssues;
+  const error = metricsError || issuesError;
+  
+  // Process real data or fallback to sample data
+  const hasRealData = sonarQubeToken && sonarMetrics && sonarIssues;
+  
+  const codeQuality = React.useMemo(() => {
+    if (hasRealData) {
+      return {
+        metrics: processSonarQubeMetrics(sonarMetrics),
+        issues: processSonarQubeIssues(sonarIssues),
+        sonarQubeConnected: true
+      };
+    }
+    
+    // Fallback to sample data
+    return generateSampleCodeQuality(organizationName, repositoryName);
+  }, [sonarMetrics, sonarIssues, hasRealData, organizationName, repositoryName]);
+
+  const handleConnectSonarQube = () => {
+    if (!tokenInput.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a SonarQube token",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setIsSubmitting(true);
+    
+    // Save token to localStorage
+    setSonarQubeToken(tokenInput);
+    
+    toast({
+      title: "Success",
+      description: "SonarQube token saved successfully"
+    });
+    
+    // Reset input and submitting state
+    setTokenInput("");
+    setIsSubmitting(false);
+  };
 
   if (isLoading) {
     return (
@@ -170,7 +362,7 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     );
   }
 
-  if (error) {
+  if (error && sonarQubeToken) {
     return (
       <Card>
         <CardHeader>
@@ -178,6 +370,9 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
         </CardHeader>
         <CardContent>
           <p className="text-red-500">Failed to load code quality metrics</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            There was an error connecting to SonarQube. Please check your token and project configuration.
+          </p>
         </CardContent>
       </Card>
     );
@@ -204,9 +399,21 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
             <p className="text-amber-700 text-sm mt-1">
               For real code quality metrics, please connect your SonarQube account. Currently showing sample data.
             </p>
-            <Button size="sm" className="mt-3">
-              Connect SonarQube
-            </Button>
+            <div className="mt-3 space-y-3">
+              <Input 
+                placeholder="Enter SonarQube token"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                type="password"
+              />
+              <Button 
+                size="sm" 
+                onClick={handleConnectSonarQube}
+                disabled={isSubmitting}
+              >
+                Connect SonarQube
+              </Button>
+            </div>
           </div>
         )}
 
@@ -254,6 +461,11 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
                   </div>
                 </div>
               ))}
+              {codeQuality?.issues.length === 0 && (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">No issues found</p>
+                </div>
+              )}
             </div>
           </TabsContent>
         </Tabs>
