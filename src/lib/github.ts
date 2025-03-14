@@ -87,7 +87,7 @@ export const fetchRepositoryCollaborators = async (owner: string, repo: string) 
   return await githubFetch(`/repos/${owner}/${repo}/collaborators`);
 };
 
-// New GitHub Actions API endpoints
+// GitHub Actions API endpoints
 export const fetchRepositoryWorkflows = async (owner: string, repo: string) => {
   return await githubFetch(`/repos/${owner}/${repo}/actions/workflows`);
 };
@@ -98,6 +98,15 @@ export const fetchRepositoryWorkflowRuns = async (owner: string, repo: string) =
 
 export const fetchWorkflowRuns = async (owner: string, repo: string, workflowId: string) => {
   return await githubFetch(`/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?per_page=100`);
+};
+
+// New endpoint for deployments
+export const fetchRepositoryDeployments = async (owner: string, repo: string) => {
+  return await githubFetch(`/repos/${owner}/${repo}/deployments?per_page=100`);
+};
+
+export const fetchRepositoryDeploymentStatus = async (owner: string, repo: string, deploymentId: number) => {
+  return await githubFetch(`/repos/${owner}/${repo}/deployments/${deploymentId}/statuses`);
 };
 
 // Transform GitHub API responses to our app's data model

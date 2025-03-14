@@ -1,10 +1,12 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { 
   fetchRepositoryDetails, 
   fetchRepositoryCollaborators,
+  fetchUserRepositories,
+  fetchOrganizationRepositories,
   transformGithubRepository 
 } from "@/lib/github";
 import TransitionWrapper from "@/components/ui-custom/TransitionWrapper";
@@ -31,6 +33,7 @@ import WorkflowStats from "@/components/dashboard/WorkflowStats";
 import CodeQuality from "@/components/dashboard/CodeQuality";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import DeploymentStats from "@/components/dashboard/DeploymentStats";
 
 const RepositoryDetails: React.FC = () => {
   const { repoId } = useParams<{ repoId: string }>();
@@ -43,6 +46,14 @@ const RepositoryDetails: React.FC = () => {
       try {
         // First fetch all repositories to find the one with matching ID
         const userRepos = await fetchUserRepositories();
+        if (!userRepos || userRepos.length === 0) {
+          // If no user repos, try organization repos
+          const orgRepos = await fetchOrganizationRepositories("Kinergy-Development");
+          return orgRepos.map((repo: any) => ({
+            ...repo,
+            id: repo.id.toString()
+          }));
+        }
         return userRepos.map((repo: any) => ({
           ...repo,
           id: repo.id.toString()
@@ -203,10 +214,11 @@ const RepositoryDetails: React.FC = () => {
 
       <TransitionWrapper show={true} animation="scale" duration={300} className="delay-100">
         <Tabs defaultValue="overview" className="w-full">
-          <TabsList className="grid grid-cols-4 mb-8">
+          <TabsList className="grid grid-cols-5 mb-8">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
             <TabsTrigger value="quality">Code Quality</TabsTrigger>
+            <TabsTrigger value="deployments">Deployments</TabsTrigger>
             <TabsTrigger value="contributors">Contributors</TabsTrigger>
           </TabsList>
           
@@ -288,6 +300,10 @@ const RepositoryDetails: React.FC = () => {
           
           <TabsContent value="quality">
             <CodeQuality organizationName={ownerName} repositoryName={repository.name} />
+          </TabsContent>
+          
+          <TabsContent value="deployments">
+            <DeploymentStats organizationName={ownerName} repositoryName={repository.name} />
           </TabsContent>
           
           <TabsContent value="contributors">

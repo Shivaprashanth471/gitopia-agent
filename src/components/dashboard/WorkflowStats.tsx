@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
 import { Progress } from "@/components/ui/progress";
@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { GitBranch, Activity, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getGithubToken } from "@/lib/github";
+import { fetchRepositoryWorkflows, fetchRepositoryWorkflowRuns, fetchWorkflowRuns, getGithubToken } from "@/lib/github";
 
 interface WorkflowStatsProps {
   organizationName: string;
@@ -18,9 +18,11 @@ interface WorkflowStatsProps {
 interface WorkflowRun {
   id: number;
   name: string;
+  workflow_id: number;
   status: string;
   conclusion: string | null;
   created_at: string;
+  display_title: string;
 }
 
 interface ProcessedWorkflowData {
@@ -32,99 +34,74 @@ interface ProcessedWorkflowData {
   lastRun: string;
 }
 
-// Fallback to sample data when real data can't be fetched
-const generateSampleWorkflowData = (orgName: string, repoName?: string) => {
-  // Create more meaningful workflow names based on common CI/CD processes
-  const workflows = [
-    "Build", 
-    "Unit Tests", 
-    "Integration Tests", 
-    "Code Quality", 
-    "Deployment"
-  ];
-  
-  return workflows.map(workflow => {
-    // Generate realistic success percentages
-    const success = Math.floor(Math.random() * 40) + 60; // 60-100% success rate
-    const failures = Math.floor(Math.random() * 15); // 0-15% failure rate
-    const skipped = 100 - success - failures; // Remaining percentage
-    
-    // Add some context to the data
-    return {
-      name: workflow,
-      success: success,
-      failures: failures,
-      skipped: skipped,
-      total: Math.floor(Math.random() * 100) + 20, // Total runs
-      lastRun: new Date(Date.now() - Math.floor(Math.random() * 5 * 24 * 60 * 60 * 1000)).toISOString(), // Random date within last 5 days
-    };
-  });
-};
-
 // Fetch workflow runs from GitHub API
-const fetchWorkflowRuns = async (owner: string, repo: string) => {
-  const token = getGithubToken();
-  if (!token) throw new Error("GitHub token not found");
-
-  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=100`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workflow runs: ${response.status}`);
+const fetchAllWorkflowData = async (owner: string, repo: string) => {
+  try {
+    // Fetch all workflows
+    const workflows = await fetchRepositoryWorkflows(owner, repo);
+    
+    // Fetch all workflow runs
+    const workflowRuns = await fetchRepositoryWorkflowRuns(owner, repo);
+    
+    return { workflows, workflowRuns };
+  } catch (error) {
+    console.error("Failed to fetch workflow data:", error);
+    throw error;
   }
-
-  return await response.json();
-};
-
-// Fetch workflow definitions from GitHub API
-const fetchWorkflows = async (owner: string, repo: string) => {
-  const token = getGithubToken();
-  if (!token) throw new Error("GitHub token not found");
-
-  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workflows: ${response.status}`);
-  }
-
-  return await response.json();
 };
 
 // Process workflow runs data to get statistics
-const processWorkflowData = (workflowRuns: WorkflowRun[], workflows: any): ProcessedWorkflowData[] => {
-  // Group runs by workflow name
-  const workflowMap = new Map<string, WorkflowRun[]>();
-  
-  // Create a map of workflow IDs to names
-  const workflowNames = new Map();
-  if (workflows && workflows.workflows) {
-    workflows.workflows.forEach((wf: any) => {
-      workflowNames.set(wf.id, wf.name);
-    });
+const processWorkflowData = (workflowRuns: any, workflows: any): ProcessedWorkflowData[] => {
+  if (!workflowRuns?.workflow_runs || !workflows?.workflows) {
+    return [];
   }
   
-  // Group runs by workflow name
-  workflowRuns.forEach(run => {
-    const name = run.name;
-    if (!workflowMap.has(name)) {
-      workflowMap.set(name, []);
+  const runs = workflowRuns.workflow_runs;
+  
+  // Create map of workflow IDs to names
+  const workflowNames = new Map();
+  workflows.workflows.forEach((wf: any) => {
+    workflowNames.set(wf.id, {
+      name: wf.name,
+      path: wf.path
+    });
+  });
+  
+  // Group runs by workflow ID
+  const workflowMap = new Map<number, WorkflowRun[]>();
+  
+  runs.forEach((run: WorkflowRun) => {
+    const workflowId = run.workflow_id;
+    if (!workflowMap.has(workflowId)) {
+      workflowMap.set(workflowId, []);
     }
-    workflowMap.get(name)?.push(run);
+    workflowMap.get(workflowId)?.push(run);
   });
   
   // Calculate statistics for each workflow
-  return Array.from(workflowMap.entries()).map(([name, runs]) => {
+  return Array.from(workflowMap.entries()).map(([workflowId, runs]) => {
+    const workflow = workflowNames.get(workflowId);
+    const workflowName = workflow ? workflow.name : "Unknown Workflow";
+    
+    // Extract workflow type from the path to categorize Build, Test, Quality, Deployment, etc.
+    const workflowPath = workflow?.path || '';
+    let inferredType = "Unknown";
+    
+    if (workflowPath) {
+      const lcPath = workflowPath.toLowerCase();
+      if (lcPath.includes('build')) inferredType = "Build";
+      else if (lcPath.includes('test') && lcPath.includes('integration')) inferredType = "Integration Tests";
+      else if (lcPath.includes('test') && lcPath.includes('unit')) inferredType = "Unit Tests";
+      else if (lcPath.includes('test')) inferredType = "Tests";
+      else if (lcPath.includes('lint') || lcPath.includes('quality')) inferredType = "Code Quality";
+      else if (lcPath.includes('deploy')) inferredType = "Deployment";
+      else if (lcPath.includes('release')) inferredType = "Release";
+      else if (lcPath.includes('pr') || lcPath.includes('pull')) inferredType = "PR Checks";
+    }
+    
+    // Display the inferred type as part of the name if available
+    const displayName = inferredType !== "Unknown" ? `${inferredType} (${workflowName})` : workflowName;
+    
     const total = runs.length;
     const successes = runs.filter(run => run.conclusion === "success").length;
     const failures = runs.filter(run => run.conclusion === "failure").length;
@@ -133,14 +110,14 @@ const processWorkflowData = (workflowRuns: WorkflowRun[], workflows: any): Proce
     // Calculate percentages
     const successPercent = total > 0 ? Math.round((successes / total) * 100) : 0;
     const failurePercent = total > 0 ? Math.round((failures / total) * 100) : 0;
-    const skippedPercent = total > 0 ? Math.round((skipped / total) * 100) : 0;
+    const skippedPercent = total > 0 ? 100 - successPercent - failurePercent : 0;
     
     // Find the most recent run
     const sortedRuns = [...runs].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const lastRun = sortedRuns.length > 0 ? sortedRuns[0].created_at : new Date().toISOString();
     
     return {
-      name,
+      name: displayName,
       success: successPercent,
       failures: failurePercent,
       skipped: skippedPercent,
@@ -150,44 +127,84 @@ const processWorkflowData = (workflowRuns: WorkflowRun[], workflows: any): Proce
   });
 };
 
+// Generate sample data for fallback or demo mode
+const generateSampleWorkflowData = (orgName: string, repoName?: string) => {
+  // Use seed-based generation for consistency
+  let seed = 0;
+  const nameToUse = repoName || orgName;
+  for (let i = 0; i < nameToUse.length; i++) {
+    seed += nameToUse.charCodeAt(i);
+  }
+  
+  // Create more realistic workflow types
+  const workflowTypes = [
+    "Build", 
+    "Unit Tests", 
+    "Integration Tests", 
+    "Code Quality", 
+    "Deployment"
+  ];
+  
+  return workflowTypes.map(workflowType => {
+    // Generate realistic success percentages based on workflow type
+    let baseSuccess = 70;
+    if (workflowType === "Build") baseSuccess = 85;
+    else if (workflowType === "Unit Tests") baseSuccess = 80;
+    else if (workflowType === "Deployment") baseSuccess = 75;
+    
+    // Add some variance based on seed
+    const variance = (seed % 20) - 10; // -10 to +10
+    let success = Math.min(100, Math.max(50, baseSuccess + variance));
+    
+    const failures = Math.min(30, 100 - success - Math.min(10, seed % 15));
+    const skipped = 100 - success - failures;
+    
+    return {
+      name: workflowType,
+      success: success,
+      failures: failures,
+      skipped: skipped,
+      total: 10 + (seed % 30), // Total runs
+      lastRun: new Date(Date.now() - (seed % 5) * 24 * 60 * 60 * 1000).toISOString(), // Recent date
+    };
+  });
+};
+
 const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, repositoryName }) => {
   const { toast } = useToast();
   const context = repositoryName ? `${repositoryName} repository` : `${organizationName} organization`;
+  const [isUsingRealData, setIsUsingRealData] = useState(false);
   
-  const { data: workflowsData, isLoading: isLoadingWorkflows, error: workflowsError } = useQuery({
-    queryKey: ["workflows", organizationName, repositoryName],
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["workflow-data", organizationName, repositoryName],
     queryFn: async () => {
       if (!repositoryName) return null;
-      return await fetchWorkflows(organizationName, repositoryName);
+      try {
+        const data = await fetchAllWorkflowData(organizationName, repositoryName);
+        setIsUsingRealData(true);
+        return data;
+      } catch (error) {
+        console.error("Failed to fetch workflow data:", error);
+        setIsUsingRealData(false);
+        return null;
+      }
     },
     enabled: !!organizationName && !!repositoryName && !!getGithubToken()
   });
-  
-  const { data: workflowRunsData, isLoading: isLoadingRuns, error: runsError } = useQuery({
-    queryKey: ["workflow-runs", organizationName, repositoryName],
-    queryFn: async () => {
-      if (!repositoryName) return null;
-      return await fetchWorkflowRuns(organizationName, repositoryName);
-    },
-    enabled: !!organizationName && !!repositoryName && !!getGithubToken()
-  });
-  
-  const isLoading = isLoadingWorkflows || isLoadingRuns;
-  const error = workflowsError || runsError;
   
   // Process the workflow data if available
   const workflowStats = React.useMemo(() => {
-    if (workflowRunsData?.workflow_runs && workflowsData) {
-      return processWorkflowData(workflowRunsData.workflow_runs, workflowsData);
+    if (data?.workflowRuns && data?.workflows) {
+      return processWorkflowData(data.workflowRuns, data.workflows);
     }
     
     // Fallback to sample data
-    if (error || !workflowRunsData || !repositoryName) {
+    if (error || !data || !repositoryName) {
       return generateSampleWorkflowData(organizationName, repositoryName);
     }
     
     return [];
-  }, [workflowRunsData, workflowsData, error, organizationName, repositoryName]);
+  }, [data, error, organizationName, repositoryName]);
 
   if (isLoading) {
     return (
@@ -215,23 +232,7 @@ const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, reposit
     );
   }
 
-  if (error) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Workflow Statistics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-red-500">Failed to load workflow statistics</p>
-          {!repositoryName && (
-            <p className="text-muted-foreground mt-2">Select a repository to view workflow statistics</p>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!workflowStats || workflowStats.length === 0) {
+  if (workflowStats.length === 0) {
     return (
       <Card>
         <CardHeader className="flex-row justify-between items-center">
@@ -246,11 +247,9 @@ const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, reposit
         <CardContent>
           <div className="flex flex-col items-center justify-center py-8">
             <p className="text-muted-foreground">No workflow data available</p>
-            {!workflowRunsData?.workflow_runs && repositoryName && (
+            {!isUsingRealData && repositoryName && (
               <p className="text-sm text-muted-foreground mt-2">
-                {workflowRunsData?.total_count === 0 ? 
-                  "This repository does not have any workflow runs" : 
-                  "Using sample data as a placeholder"}
+                Using sample data as a placeholder
               </p>
             )}
           </div>
@@ -268,7 +267,7 @@ const WorkflowStats: React.FC<WorkflowStatsProps> = ({ organizationName, reposit
         </div>
         <div className="text-sm text-muted-foreground">
           Showing data for {context}
-          {!workflowRunsData?.workflow_runs && " (sample data)"}
+          {!isUsingRealData && " (sample data)"}
         </div>
       </CardHeader>
       <CardContent>

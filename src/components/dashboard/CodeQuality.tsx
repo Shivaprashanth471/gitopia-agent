@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui-custom/Button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 interface CodeQualityProps {
   organizationName: string;
@@ -126,7 +127,13 @@ const generateSampleCodeQuality = (orgName: string, repoName?: string) => {
 
 // SonarQube token management
 const getSonarQubeToken = () => localStorage.getItem("sonarqube_token");
-const setSonarQubeToken = (token: string) => localStorage.setItem("sonarqube_token", token);
+
+// Fixed - make sure setSonarQubeToken actually saves the token and provides feedback
+const setSonarQubeToken = (token: string) => {
+  localStorage.setItem("sonarqube_token", token);
+  toast.success("SonarQube token saved successfully");
+  return true;
+};
 
 // Function to fetch metrics from SonarQube
 const fetchSonarQubeMetrics = async (projectKey: string) => {
@@ -263,21 +270,26 @@ const getStatusIcon = (status: string) => {
 };
 
 const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryName }) => {
-  const { toast } = useToast();
+  const { toast: useToastHook } = useToast();
   const [tokenInput, setTokenInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasSonarQubeToken, setHasSonarQubeToken] = useState(!!getSonarQubeToken());
+  
+  // Check if token exists on component mount
+  useEffect(() => {
+    setHasSonarQubeToken(!!getSonarQubeToken());
+  }, []);
   
   const context = repositoryName 
     ? `${repositoryName} repository` 
     : `${organizationName} organization`;
     
-  const sonarQubeToken = getSonarQubeToken();
   const projectKey = repositoryName 
     ? `${organizationName}_${repositoryName}` 
     : organizationName;
     
-  const { data: sonarMetrics, isLoading: isLoadingMetrics, error: metricsError } = useQuery({
-    queryKey: ["sonar-metrics", projectKey],
+  const { data: sonarMetrics, isLoading: isLoadingMetrics, error: metricsError, refetch: refetchMetrics } = useQuery({
+    queryKey: ["sonar-metrics", projectKey, hasSonarQubeToken],
     queryFn: async () => {
       try {
         return await fetchSonarQubeMetrics(projectKey);
@@ -286,11 +298,11 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
         return null;
       }
     },
-    enabled: !!repositoryName && !!sonarQubeToken
+    enabled: !!repositoryName && hasSonarQubeToken
   });
   
-  const { data: sonarIssues, isLoading: isLoadingIssues, error: issuesError } = useQuery({
-    queryKey: ["sonar-issues", projectKey],
+  const { data: sonarIssues, isLoading: isLoadingIssues, error: issuesError, refetch: refetchIssues } = useQuery({
+    queryKey: ["sonar-issues", projectKey, hasSonarQubeToken],
     queryFn: async () => {
       try {
         return await fetchSonarQubeIssues(projectKey);
@@ -299,14 +311,14 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
         return null;
       }
     },
-    enabled: !!repositoryName && !!sonarQubeToken
+    enabled: !!repositoryName && hasSonarQubeToken
   });
   
   const isLoading = isLoadingMetrics || isLoadingIssues;
   const error = metricsError || issuesError;
   
   // Process real data or fallback to sample data
-  const hasRealData = sonarQubeToken && sonarMetrics && sonarIssues;
+  const hasRealData = hasSonarQubeToken && sonarMetrics && sonarIssues;
   
   const codeQuality = React.useMemo(() => {
     if (hasRealData) {
@@ -321,29 +333,34 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     return generateSampleCodeQuality(organizationName, repositoryName);
   }, [sonarMetrics, sonarIssues, hasRealData, organizationName, repositoryName]);
 
+  // Fixed - Make sure handleConnectSonarQube saves the token and updates the state
   const handleConnectSonarQube = () => {
     if (!tokenInput.trim()) {
-      toast({
-        title: "Error",
-        description: "Please enter a SonarQube token",
-        variant: "destructive"
-      });
+      toast.error("Please enter a SonarQube token");
       return;
     }
     
     setIsSubmitting(true);
     
-    // Save token to localStorage
-    setSonarQubeToken(tokenInput);
-    
-    toast({
-      title: "Success",
-      description: "SonarQube token saved successfully"
-    });
-    
-    // Reset input and submitting state
-    setTokenInput("");
-    setIsSubmitting(false);
+    try {
+      // Save token to localStorage
+      setSonarQubeToken(tokenInput);
+      
+      // Update state
+      setHasSonarQubeToken(true);
+      
+      // Reset input and submitting state
+      setTokenInput("");
+      
+      // Refetch data with new token
+      refetchMetrics();
+      refetchIssues();
+    } catch (error) {
+      toast.error("Failed to save SonarQube token");
+      console.error(error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isLoading) {
@@ -362,7 +379,7 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     );
   }
 
-  if (error && sonarQubeToken) {
+  if (error && hasSonarQubeToken) {
     return (
       <Card>
         <CardHeader>
@@ -387,6 +404,7 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
         </div>
         <div className="text-sm text-muted-foreground">
           Showing data for {context}
+          {!codeQuality?.sonarQubeConnected && " (sample data)"}
         </div>
       </CardHeader>
       <CardContent>
