@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -40,6 +39,7 @@ const RepositoryDetails: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   
+  // Updated query to ensure proper imports are being used
   const { data: repositories, isLoading: isLoadingRepos } = useQuery({
     queryKey: ['repositories'],
     queryFn: async () => {

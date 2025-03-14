@@ -54,7 +54,7 @@ const githubFetch = async (endpoint: string, options: RequestInit = {}) => {
   }
 };
 
-// GitHub API endpoints
+// GitHub API endpoints - User data
 export const fetchUserProfile = async () => {
   return await githubFetch("/user");
 };
@@ -71,6 +71,7 @@ export const fetchOrganizationMembers = async (orgName: string) => {
   return await githubFetch(`/orgs/${orgName}/members`);
 };
 
+// Repository data
 export const fetchUserRepositories = async () => {
   return await githubFetch("/user/repos?sort=updated&per_page=100");
 };
