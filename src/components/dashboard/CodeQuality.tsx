@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui-custom/Card";
@@ -125,56 +124,94 @@ const generateSampleCodeQuality = (orgName: string, repoName?: string) => {
   };
 };
 
-// SonarQube token management
-const getSonarQubeToken = () => localStorage.getItem("sonarqube_token");
-
-// Fixed - make sure setSonarQubeToken actually saves the token and provides feedback
-const setSonarQubeToken = (token: string) => {
-  localStorage.setItem("sonarqube_token", token);
-  toast.success("SonarQube token saved successfully");
-  return true;
+// SonarQube token management - Improved to ensure proper token handling
+const getSonarQubeToken = () => {
+  const token = localStorage.getItem("sonarqube_token");
+  console.log("Retrieved token from localStorage:", token ? "Token exists" : "No token found");
+  return token;
 };
 
-// Function to fetch metrics from SonarQube
+const setSonarQubeToken = (token: string) => {
+  try {
+    localStorage.setItem("sonarqube_token", token);
+    console.log("Token saved to localStorage successfully");
+    toast.success("SonarQube token saved successfully");
+    return true;
+  } catch (error) {
+    console.error("Failed to save token:", error);
+    toast.error("Failed to save SonarQube token");
+    return false;
+  }
+};
+
+// Function to fetch metrics from SonarQube - Improved error handling
 const fetchSonarQubeMetrics = async (projectKey: string) => {
   const token = getSonarQubeToken();
-  if (!token) throw new Error("SonarQube token not found");
+  if (!token) {
+    console.error("SonarQube token not found when fetching metrics");
+    throw new Error("SonarQube token not found");
+  }
 
+  console.log(`Fetching SonarQube metrics for project: ${projectKey}`);
+  
   // SonarQube API endpoint for metrics
   const url = `https://sonarcloud.io/api/measures/component?component=${projectKey}&metricKeys=coverage,duplicated_lines_density,sqale_index,code_smells,bugs`;
   
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Failed to fetch SonarQube metrics: ${response.status}`, errorText);
+      throw new Error(`Failed to fetch SonarQube metrics: ${response.status}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch SonarQube metrics: ${response.status}`);
+    const data = await response.json();
+    console.log("Successfully fetched SonarQube metrics");
+    return data;
+  } catch (error) {
+    console.error("Error in fetchSonarQubeMetrics:", error);
+    throw error;
   }
-
-  return await response.json();
 };
 
-// Function to fetch issues from SonarQube
+// Function to fetch issues from SonarQube - Improved error handling
 const fetchSonarQubeIssues = async (projectKey: string) => {
   const token = getSonarQubeToken();
-  if (!token) throw new Error("SonarQube token not found");
+  if (!token) {
+    console.error("SonarQube token not found when fetching issues");
+    throw new Error("SonarQube token not found");
+  }
 
+  console.log(`Fetching SonarQube issues for project: ${projectKey}`);
+  
   // SonarQube API endpoint for issues
   const url = `https://sonarcloud.io/api/issues/search?componentKeys=${projectKey}&resolved=false&ps=10`;
   
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Failed to fetch SonarQube issues: ${response.status}`, errorText);
+      throw new Error(`Failed to fetch SonarQube issues: ${response.status}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch SonarQube issues: ${response.status}`);
+    const data = await response.json();
+    console.log("Successfully fetched SonarQube issues");
+    return data;
+  } catch (error) {
+    console.error("Error in fetchSonarQubeIssues:", error);
+    throw error;
   }
-
-  return await response.json();
 };
 
 // Process SonarQube metrics into our format
@@ -273,11 +310,13 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
   const { toast: useToastHook } = useToast();
   const [tokenInput, setTokenInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasSonarQubeToken, setHasSonarQubeToken] = useState(!!getSonarQubeToken());
+  const [hasSonarQubeToken, setHasSonarQubeToken] = useState(false);
   
-  // Check if token exists on component mount
+  // Check if token exists on component mount with improved logging
   useEffect(() => {
-    setHasSonarQubeToken(!!getSonarQubeToken());
+    const token = getSonarQubeToken();
+    console.log("Initial token check:", token ? "Token exists" : "No token found");
+    setHasSonarQubeToken(!!token);
   }, []);
   
   const context = repositoryName 
@@ -292,6 +331,11 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     queryKey: ["sonar-metrics", projectKey, hasSonarQubeToken],
     queryFn: async () => {
       try {
+        if (!hasSonarQubeToken) {
+          console.log("Skipping metrics fetch - no token");
+          return null;
+        }
+        console.log("Attempting to fetch SonarQube metrics");
         return await fetchSonarQubeMetrics(projectKey);
       } catch (error) {
         console.error("Failed to fetch SonarQube metrics:", error);
@@ -305,6 +349,11 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     queryKey: ["sonar-issues", projectKey, hasSonarQubeToken],
     queryFn: async () => {
       try {
+        if (!hasSonarQubeToken) {
+          console.log("Skipping issues fetch - no token");
+          return null;
+        }
+        console.log("Attempting to fetch SonarQube issues");
         return await fetchSonarQubeIssues(projectKey);
       } catch (error) {
         console.error("Failed to fetch SonarQube issues:", error);
@@ -333,7 +382,7 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     return generateSampleCodeQuality(organizationName, repositoryName);
   }, [sonarMetrics, sonarIssues, hasRealData, organizationName, repositoryName]);
 
-  // Fixed - Make sure handleConnectSonarQube saves the token and updates the state
+  // Improved token saving and state updating
   const handleConnectSonarQube = () => {
     if (!tokenInput.trim()) {
       toast.error("Please enter a SonarQube token");
@@ -343,21 +392,28 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
     setIsSubmitting(true);
     
     try {
+      console.log("Saving token and updating connection state");
+      
       // Save token to localStorage
-      setSonarQubeToken(tokenInput);
+      const saved = setSonarQubeToken(tokenInput.trim());
       
-      // Update state
-      setHasSonarQubeToken(true);
-      
-      // Reset input and submitting state
-      setTokenInput("");
-      
-      // Refetch data with new token
-      refetchMetrics();
-      refetchIssues();
+      if (saved) {
+        // Update state
+        setHasSonarQubeToken(true);
+        
+        // Reset input
+        setTokenInput("");
+        
+        // Force refetch with setTimeout to ensure token is saved
+        setTimeout(() => {
+          console.log("Refetching data with new token");
+          refetchMetrics();
+          refetchIssues();
+        }, 500);
+      }
     } catch (error) {
-      toast.error("Failed to save SonarQube token");
-      console.error(error);
+      console.error("Error in handleConnectSonarQube:", error);
+      toast.error("Failed to connect to SonarQube");
     } finally {
       setIsSubmitting(false);
     }
@@ -423,13 +479,14 @@ const CodeQuality: React.FC<CodeQualityProps> = ({ organizationName, repositoryN
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
                 type="password"
+                className="bg-white"
               />
               <Button 
                 size="sm" 
                 onClick={handleConnectSonarQube}
                 disabled={isSubmitting}
               >
-                Connect SonarQube
+                {isSubmitting ? "Connecting..." : "Connect SonarQube"}
               </Button>
             </div>
           </div>
